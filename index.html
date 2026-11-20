@@ -124,10 +124,10 @@ button:focus-visible,.pick:focus-within{outline:3px solid var(--accent);outline-
 
 <script>
 const LEVELS = [
-  {max:2048, q:0.72},
-  {max:1280, q:0.55},
-  {max:800,  q:0.38},
-  {max:480,  q:0.25}
+  {max:2048, q:0.80},
+  {max:1280, q:0.70},
+  {max:800,  q:0.55},
+  {max:480,  q:0.45}
 ];
 let level = 2, files = [], results = [];
 
@@ -161,13 +161,22 @@ async function load(file){
 const toBlob = (c,q) => new Promise(r=>c.toBlob(r,"image/jpeg",q));
 
 function draw(img, scale){
-  const w = Math.max(1,Math.round((img.width||img.naturalWidth)*scale));
-  const h = Math.max(1,Math.round((img.height||img.naturalHeight)*scale));
+  const sw = img.width||img.naturalWidth, sh = img.height||img.naturalHeight;
+  const w = Math.max(1,Math.round(sw*scale));
+  const h = Math.max(1,Math.round(sh*scale));
+  // 分段縮小(每次最多縮一半),比一次縮到位更銳利、不易鋸齒
+  let src = img, cw = sw, ch = sh;
+  while(cw/2 > w){
+    const nw=Math.round(cw/2), nh=Math.round(ch/2);
+    const t=document.createElement("canvas"); t.width=nw; t.height=nh;
+    const tx=t.getContext("2d"); tx.imageSmoothingQuality="high"; tx.drawImage(src,0,0,nw,nh);
+    src=t; cw=nw; ch=nh;
+  }
   const c = document.createElement("canvas"); c.width=w; c.height=h;
   const x = c.getContext("2d");
   x.fillStyle="#fff"; x.fillRect(0,0,w,h);
   x.imageSmoothingQuality="high";
-  x.drawImage(img,0,0,w,h);
+  x.drawImage(src,0,0,w,h);
   return c;
 }
 
@@ -181,18 +190,21 @@ async function compress(file, targetKB){
     return await toBlob(draw(img,scale), L.q);
   }
   const limit = targetKB*1024;
-  // 目標大小模式:從選的檔位長邊開始,品質二分搜尋,不夠小就再縮圖
-  for(let round=0; round<12; round++){
+  // 目標大小模式:畫質固定在 0.6 以上,檔案太大就「縮小尺寸」而不是壓爛畫質
+  scale = Math.min(1, 2048/Math.max(W,H));
+  for(let round=0; round<20; round++){
     const c = draw(img, scale);
-    let lo=0.05, hi=0.9, best=null;
-    for(let i=0;i<7;i++){
-      const mid=(lo+hi)/2, b=await toBlob(c,mid);
-      if(b.size<=limit){best=b; lo=mid;} else hi=mid;
+    let lo=0.6, hi=0.92, best=await toBlob(c,lo);
+    if(best.size<=limit){
+      for(let i=0;i<6;i++){
+        const mid=(lo+hi)/2, bl=await toBlob(c,mid);
+        if(bl.size<=limit){best=bl; lo=mid;} else hi=mid;
+      }
+      return best;
     }
-    if(best) return best;
-    scale*=0.8;
+    scale*=0.85;
   }
-  return await toBlob(draw(img,scale),0.05);
+  return await toBlob(draw(img,scale),0.6);
 }
 
 $("go").onclick = async () => {
